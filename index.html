@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Abyss Stream</title>
+    <style>
+        :root { --bg: #121212; --text: #ffffff; --card: #1e1e1e; --accent: #bb86fc; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 20px; }
+        header { text-align: center; margin-bottom: 20px; }
+        
+        /* Debug Console Styles */
+        #debug-box { background: #222; color: #ff5555; padding: 15px; margin: 10px auto 30px auto; max-width: 800px; border-radius: 5px; border: 1px solid #ff3333; font-family: monospace; white-space: pre-wrap; font-size: 13px; text-align: left; }
+        
+        #video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; max-width: 1200px; margin: 0 auto; }
+        .video-card { background-color: var(--card); border-radius: 10px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.2s; cursor: pointer; display: flex; flex-direction: column; }
+        .video-card:hover { transform: scale(1.02); }
+        .video-info { padding: 15px; flex-grow: 1; }
+        .video-title { font-size: 1.05em; margin: 0 0 8px 0; font-weight: bold; word-break: break-word; }
+        .video-meta { font-size: 0.85em; color: #aaa; }
+        .iframe-container { position: relative; width: 100%; padding-bottom: 56.25%; background: #000; }
+        .iframe-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+        .center-status { text-align: center; grid-column: 1 / -1; padding: 40px; color: #aaa; font-size: 1.1em; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>My Streaming Platform</h1>
+        <p>Real-time folder tracking via Cloudflare Worker</p>
+    </header>
+
+    <!-- On-screen visual log window -->
+    <div id="debug-box">System Status: Booting interface... Waiting for connection string.</div>
+
+    <main id="video-grid">
+        <div class="center-status">Initializing stream engine...</div>
+    </main>
+
+    <script>
+        // 1. CHANGE THIS TO YOUR EXACT WORKER URL
+        const WORKER_URL = 'https://abyss-proxy.YOUR_SUBDOMAIN.workers.dev/';
+
+        const debugBox = document.getElementById('debug-box');
+        const grid = document.getElementById('video-grid');
+
+        function logStatus(message, type = 'error') {
+            if (type === 'success') {
+                debugBox.style.borderColor = '#00ff00';
+                debugBox.style.color = '#00ff00';
+            } else if (type === 'info') {
+                debugBox.style.borderColor = '#33b5e5';
+                debugBox.style.color = '#33b5e5';
+            } else {
+                debugBox.style.borderColor = '#ff3333';
+                debugBox.style.color = '#ff5555';
+            }
+            debugBox.innerText = `[LOG]: ${message}`;
+        }
+
+        // Unregister any old broken service worker caches interfering
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(registrations => {
+                for (let registration of registrations) {
+                    registration.unregister();
+                }
+            });
+        }
+
+        async function fetchResources(folderId = "", pageToken = "") {
+            if (!pageToken) {
+                grid.innerHTML = '<div class="center-status">Contacting middleman server...</div>';
+            }
+
+            try {
+                // Ensure URL formatting handles parameters cleanly
+                let targetUrl = WORKER_URL;
+                const urlObj = new URL(targetUrl);
+                
+                if (pageToken) urlObj.searchParams.append('pageToken', pageToken);
+                if (folderId) urlObj.searchParams.append('folderId', folderId);
+                
+                logStatus(`Sending request to proxy: ${urlObj.toString()}`, 'info');
+
+                const response = await fetch(urlObj.toString(), { method: 'GET' });
+                
+                logStatus(`Proxy responded. Status: ${response.status} (${response.statusText})`, response.ok ? 'info' : 'error');
+
+                if (!response.ok) {
+                    throw new Error(`HTTP Error ${response.status}: Failed to communicate with your Worker backend.`);
+                }
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(`Cloudflare Worker internal error: ${data.error}`);
+                }
+
+                logStatus(`Connection successful! Parsed JSON package containing ${data.items ? data.items.length : 0} elements.`, 'success');
+                
+                if (!pageToken) grid.innerHTML = ''; 
+
+                // Back button to navigate out of subfolders
+                if (folderId !== "") {
+                    renderBackButton();
+                }
+
+                if (data.items && data.items.length > 0) {
+                    renderItems(data.items, data.domainEmbed);
+                } else if (!pageToken) {
+                    grid.innerHTML = '<div class="center-status">This directory contains no items or subfolders.</div>';
+                }
+
+                if (data.pageToken) {
+                    setTimeout(() => fetchResources(folderId, data.pageToken), 1000); 
+                }
+            } catch (error) {
+                console.error(error);
+                logStatus(`CRITICAL DISCONNECT: ${error.message}\n\nTroubleshooting steps:\n1. Open your Cloudflare Worker URL directly in a new tab. Does it show an error or a blank page?\n2. Ensure CORS headers match perfectly.\n3. Verify your Abyss Key is saved correctly inside Cloudflare settings.`);
+                grid.innerHTML = `<div class="center-status" style="color:#ff5555;">Execution blocked. Review the status box above for details.</div>`;
+            }
+        }
+
+        function renderBackButton() {
+            const backBtn = document.createElement('div');
+            backBtn.className = 'video-card';
+            backBtn.innerHTML = `
+                <div style="padding: 30px; text-align: center; background: #2a2a2a; font-size: 35px;">🔙</div>
+                <div class="video-info">
+                    <h3 class="video-title">Return up</h3>
+                    <div class="video-meta">Back to Root Directory</div>
+                </div>
+            `;
+            backBtn.onclick = () => fetchResources(""); 
+            grid.appendChild(backBtn);
+        }
+
+        function renderItems(items, domainEmbed) {
+            items.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'video-card';
+                
+                if (item.isDir) {
+                    card.innerHTML = `
+                        <div style="padding: 30px; text-align: center; background: #333; font-size: 40px;">📁</div>
+                        <div class="video-info">
+                            <h3 class="video-title">${item.name}</h3>
+                            <div class="video-meta">Directory Folder</div>
+                        </div>
+                    `;
+                    card.onclick = () => fetchResources(item.id); 
+                } else {
+                    card.innerHTML = `
+                        <div class="iframe-container">
+                            <iframe src="https://${domainEmbed}/?v=${item.id}" allowfullscreen frameborder="0" scrolling="no"></iframe>
+                        </div>
+                        <div class="video-info">
+                            <h3 class="video-title">${item.name}</h3>
+                            <div class="video-meta">Video • Resolutions: ${item.resolutions ? item.resolutions.join(', ') : 'Standard'}</div>
+                        </div>
+                    `;
+                }
+                grid.appendChild(card);
+            });
+        }
+
+        // Fire request on load
+        if (WORKER_URL.includes("https://abyss-proxy.storage2-7777.workers.dev")) {
+            logStatus("Setup Error: You forgot to swap out 'YOUR_SUBDOMAIN' with your real Cloudflare account endpoint on line 43.", "error");
+        } else {
+            fetchResources();
+        }
+    </script>
+</body>
+</html>
